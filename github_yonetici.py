@@ -9,8 +9,23 @@ def cmd(command):
     return res.returncode == 0, res.stdout.strip(), res.stderr.strip()
 
 
-def buyuk_dosya_kontrol(dizin, limit_mb=99):
-    """100 MB sinirina takilacak dosyalari tarar."""
+def klasor_boyutu_hesapla(dizin):
+    """Proje klasorunun toplam boyutunu MB cinsinden hesaplar."""
+    toplam_byte = 0
+    for root, _, files in os.walk(dizin):
+        if ".git" in root:
+            continue
+        for f in files:
+            yol = os.path.join(root, f)
+            try:
+                toplam_byte += os.path.getsize(yol)
+            except (OSError, FileNotFoundError):
+                continue
+    return toplam_byte / (1024 * 1024)
+
+
+def buyuk_dosya_taramasi(dizin, limit_mb=99):
+    """Tekil olarak 100 MB sinirina takilacak dosyalari tarar."""
     buyukler = []
     limit_byte = limit_mb * 1024 * 1024
     for root, _, files in os.walk(dizin):
@@ -19,8 +34,9 @@ def buyuk_dosya_kontrol(dizin, limit_mb=99):
         for f in files:
             yol = os.path.join(root, f)
             try:
-                if os.path.getsize(yol) > limit_byte:
-                    boyut_mb = round(os.path.getsize(yol) / (1024 * 1024), 2)
+                boyut = os.path.getsize(yol)
+                if boyut > limit_byte:
+                    boyut_mb = round(boyut / (1024 * 1024), 2)
                     buyukler.append((os.path.relpath(yol, dizin), boyut_mb))
             except (OSError, FileNotFoundError):
                 continue
@@ -28,19 +44,16 @@ def buyuk_dosya_kontrol(dizin, limit_mb=99):
 
 
 def git_ag_ayarlarini_yapilandir():
-    """1.3 GB gibi yuklemelerde timeout ve buffer hatalarini engeller."""
-    # 2 GB HTTP Post Buffer ayari
-    cmd("git config --global http.postBuffer 2097152000")
-    # Baglanti timeout surelerini uzat
+    """Genis capli yuklemelerde timeout ve buffer kopmalarini onler."""
+    cmd("git config --global http.postBuffer 2097152000")  # 2 GB Buffer
     cmd("git config --global http.lowSpeedLimit 1000")
     cmd("git config --global http.lowSpeedTime 600")
-    # Sikistirmayi ac
     cmd("git config --global core.compression 0")
 
 
 def klasor_sec():
     while True:
-        print("\n" + "=" * 45)
+        print("\n" + "=" * 50)
         dizin = (
             input(
                 "📁 Proje klasörünü sürükleyip buraya bırakın\n(veya mevcut klasör için Enter): "
@@ -77,15 +90,29 @@ def repo_baglantisi_al():
 
 def calistir():
     print("=" * 50)
-    print("   🚀 GİTHUB YÜKLEME ARACI (BÜYÜK VERİ DESTEKLİ)")
+    print("       🚀 GİTHUB YÜKLEME & GÜNCELLEME ARACI       ")
     print("=" * 50)
 
     if not klasor_sec():
         return
 
-    # 1. Aşama: Büyük dosya kontrolü
-    print("\n🔍 Dosya boyutları denetleniyor (100 MB sınırı)...")
-    engeller = buyuk_dosya_kontrol(os.getcwd())
+    # 1. Boyut ve Dosya Kontrolü
+    print("\n🔍 Proje taranıyor ve dosya boyutları denetleniyor...")
+    toplam_mb = klasor_boyutu_hesapla(os.getcwd())
+
+    if toplam_mb >= 1024:
+        print(f"-> Toplam Proje Boyutu: {toplam_mb / 1024:.2f} GB")
+    else:
+        print(f"-> Toplam Proje Boyutu: {toplam_mb:.2f} MB")
+
+    if toplam_mb > 2048:
+        print(
+            "\n[!] BİLGİ: Toplam boyut GitHub'ın önerilen 2 GB depo sınırını aşıyor."
+        )
+        print("    Yükleme yapılabilir ancak GitHub ileride uyarı verebilir.")
+
+    # 100 MB tekil dosya engeli kontrolü
+    engeller = buyuk_dosya_taramasi(os.getcwd())
     if engeller:
         print("\n[!] DİKKAT: GitHub tek dosyada 100 MB sınırına sahiptir!")
         print("Aşağıdaki dosyalar yüklemeyi durduracaktır:")
@@ -103,8 +130,7 @@ def calistir():
             print("İşlem iptal edildi.")
             return
 
-    # 2. Aşama: Git Ağ optimizasyonu
-    print("[+] Git aktarım ayarları (2 GB Buffer) optimize ediliyor...")
+    # 2. Ağ Optimizasyonu
     git_ag_ayarlarini_yapilandir()
 
     if not os.path.exists(".git"):
@@ -120,36 +146,34 @@ def calistir():
 
     _, status, _ = cmd("git status --short")
     if not status:
-        print("\n✅ Değişen dosya yok. Her şey güncel!")
+        print("\n✅ Değişen veya yeni eklenen dosya yok. Her şey güncel!")
         return
 
     mesaj = (
-        input("\n💬 Commit açıklaması (Varsayılan: 'Büyük güncelleme'): ").strip()
-        or "Büyük güncelleme"
+        input("\n💬 Ne değiştirdiniz? (Açıklama girin veya Güncelleme için Enter): ").strip()
+        or "Proje guncellemesi"
     )
 
-    print("\n⏳ 1.3 GB veri taranıyor ve paketleniyor (Bu biraz sürebilir)...")
+    print("\n⏳ Dosyalar taranıyor ve Git paketine ekleniyor...")
     cmd("git add .")
 
-    print("[+] Değişiklikler yerel olarak kaydediliyor...")
+    print("[+] Değişiklikler yerel olarak kaydedildi.")
     cmd(f'git commit -m "{mesaj}"')
 
     print(
-        f"\n🚀 Dosyalar GitHub'a aktarılıyor (origin/{branch})...\nLütfen internet bağlantısını kesmeyin..."
+        f"\n🚀 Veriler GitHub'a aktarılıyor (origin/{branch})...\nLütfen internet bağlantısını kesmeyin..."
     )
 
-    # Büyük dosyalarda rebase çakışma yaratabileceğinden sade push uygulanır
     basarili, out, err = cmd(f"git push -u origin {branch}")
 
     if not basarili:
-        # Eğer uzak sunucuda değişiklik varsa önce çekmeyi dene
         print("[i] Uzak depoyla senkronizasyon deneniyor...")
         cmd(f"git pull origin {branch} --allow-unrelated-histories --no-rebase")
         basarili, out, err = cmd(f"git push origin {branch}")
 
     print("\n" + "=" * 50)
     if basarili:
-        print("🎉 TEBRİKLER! 1.3 GB veriniz başarıyla yüklendi/güncellendi.")
+        print("🎉 TEBRİKLER! Projeniz başarıyla yüklendi/güncellendi.")
     else:
         print("❌ Yükleme sırasında hata oluştu:")
         print(err if err else out)
