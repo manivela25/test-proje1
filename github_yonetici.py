@@ -4,18 +4,38 @@ import sys
 
 
 def cmd(command):
-    """Komutu sessizce çalıştırır, (başarılı_mı, çıktı) döndürür."""
+    """Komutu calistirir, (basarili_mi, cikti, hata) dondurur."""
     res = subprocess.run(command, shell=True, text=True, capture_output=True)
     return res.returncode == 0, res.stdout.strip(), res.stderr.strip()
 
 
-def git_kontrol():
-    ok, _, _ = cmd("git --version")
-    if not ok:
-        print("\n[!] Bilgisayarınızda Git kurulu değil!")
-        print("Lütfen önce Git kurun: https://git-scm.com/")
-        input("\nÇıkmak için Enter'a basın...")
-        sys.exit(1)
+def buyuk_dosya_kontrol(dizin, limit_mb=99):
+    """100 MB sinirina takilacak dosyalari tarar."""
+    buyukler = []
+    limit_byte = limit_mb * 1024 * 1024
+    for root, _, files in os.walk(dizin):
+        if ".git" in root:
+            continue
+        for f in files:
+            yol = os.path.join(root, f)
+            try:
+                if os.path.getsize(yol) > limit_byte:
+                    boyut_mb = round(os.path.getsize(yol) / (1024 * 1024), 2)
+                    buyukler.append((os.path.relpath(yol, dizin), boyut_mb))
+            except (OSError, FileNotFoundError):
+                continue
+    return buyukler
+
+
+def git_ag_ayarlarini_yapilandir():
+    """1.3 GB gibi yuklemelerde timeout ve buffer hatalarini engeller."""
+    # 2 GB HTTP Post Buffer ayari
+    cmd("git config --global http.postBuffer 2097152000")
+    # Baglanti timeout surelerini uzat
+    cmd("git config --global http.lowSpeedLimit 1000")
+    cmd("git config --global http.lowSpeedTime 600")
+    # Sikistirmayi ac
+    cmd("git config --global core.compression 0")
 
 
 def klasor_sec():
@@ -23,14 +43,13 @@ def klasor_sec():
         print("\n" + "=" * 45)
         dizin = (
             input(
-                "📁 Proje klasörünü sürükleyip buraya bırakın\n(veya mevcut klasör için doğrudan Enter'a basın): "
+                "📁 Proje klasörünü sürükleyip buraya bırakın\n(veya mevcut klasör için Enter): "
             )
             .strip()
             .strip("\"'")
         )
 
         if not dizin:
-            print(f"-> Seçilen klasör: {os.getcwd()}")
             return True
 
         if os.path.isdir(dizin):
@@ -42,16 +61,13 @@ def klasor_sec():
 
 
 def repo_baglantisi_al():
-    """Origin URL'sini alır veya kullanıcıdan girmesini ister."""
     ok, out, _ = cmd("git remote get-url origin")
     if ok and out:
         return out
 
     print("\n🔗 Bu klasör henüz bir GitHub deposuna bağlı değil.")
     while True:
-        url = input(
-            "GitHub Repository URL'sini yapıştırın (https://github.com/...): "
-        ).strip()
+        url = input("GitHub Repository URL'sini girin: ").strip()
         if url.startswith("https://") or url.startswith("git@"):
             cmd("git remote remove origin")
             cmd(f"git remote add origin {url}")
@@ -59,78 +75,89 @@ def repo_baglantisi_al():
         print("[!] Geçerli bir GitHub linki giriniz.")
 
 
-def tek_tus_calistir():
-    git_kontrol()
-    print("=" * 45)
-    print("       🚀 GİTHUB YÜKLEME & GÜNCELLEME       ")
-    print("=" * 45)
+def calistir():
+    print("=" * 50)
+    print("   🚀 GİTHUB YÜKLEME ARACI (BÜYÜK VERİ DESTEKLİ)")
+    print("=" * 50)
 
-    # 1. Adım: Klasör Belirle
     if not klasor_sec():
         return
 
-    # Git init kontrolü
+    # 1. Aşama: Büyük dosya kontrolü
+    print("\n🔍 Dosya boyutları denetleniyor (100 MB sınırı)...")
+    engeller = buyuk_dosya_kontrol(os.getcwd())
+    if engeller:
+        print("\n[!] DİKKAT: GitHub tek dosyada 100 MB sınırına sahiptir!")
+        print("Aşağıdaki dosyalar yüklemeyi durduracaktır:")
+        for dosya, boyut in engeller:
+            print(f"  - {dosya} ({boyut} MB)")
+        print(
+            "\nÇözüm: Bu dosyaları .gitignore içine ekleyin veya Git LFS kullanın."
+        )
+        onay = (
+            input("Yine de devam etmek istiyor musunuz? (e/h): ")
+            .strip()
+            .lower()
+        )
+        if onay != "e":
+            print("İşlem iptal edildi.")
+            return
+
+    # 2. Aşama: Git Ağ optimizasyonu
+    print("[+] Git aktarım ayarları (2 GB Buffer) optimize ediliyor...")
+    git_ag_ayarlarini_yapilandir()
+
     if not os.path.exists(".git"):
         cmd("git init")
         cmd("git branch -M main")
 
-    # Dal (Branch) tespiti ve sabitleme
     _, branch, _ = cmd("git branch --show-current")
     if not branch:
         branch = "main"
         cmd(f"git branch -M {branch}")
 
-    # 2. Adım: GitHub Bağlantısını Doğrula
     repo_url = repo_baglantisi_al()
 
-    # 3. Adım: Değişiklik Kontrolü
     _, status, _ = cmd("git status --short")
     if not status:
-        print("\n✅ Klasörde değişen veya yeni eklenen bir dosya yok. Her şey güncel!")
-        input("\nKapatmak için Enter'a basın...")
+        print("\n✅ Değişen dosya yok. Her şey güncel!")
         return
 
-    print("\n📄 Tespit edilen yeni/değişen dosyalar hazırlandı.")
+    mesaj = (
+        input("\n💬 Commit açıklaması (Varsayılan: 'Büyük güncelleme'): ").strip()
+        or "Büyük güncelleme"
+    )
 
-    # 4. Adım: Commit Açıklaması
-    mesaj = input(
-        "\n💬 Ne değiştirdiniz? (Açıklama girin veya 'Güncelleme' için Enter): "
-    ).strip()
-    if not mesaj:
-        mesaj = "Proje guncellemesi"
-
-    print("\n⏳ Dosyalar GitHub'a aktarılıyor, lütfen bekleyin...")
-
-    # Git işlemleri
+    print("\n⏳ 1.3 GB veri taranıyor ve paketleniyor (Bu biraz sürebilir)...")
     cmd("git add .")
+
+    print("[+] Değişiklikler yerel olarak kaydediliyor...")
     cmd(f'git commit -m "{mesaj}"')
 
-    # Önce uzaktaki son durumu çek (çakışmaları önlemek için)
-    cmd(f"git pull origin {branch} --rebase")
+    print(
+        f"\n🚀 Dosyalar GitHub'a aktarılıyor (origin/{branch})...\nLütfen internet bağlantısını kesmeyin..."
+    )
 
-    # Push dene
-    basarili, _, err = cmd(f"git push -u origin {branch}")
+    # Büyük dosyalarda rebase çakışma yaratabileceğinden sade push uygulanır
+    basarili, out, err = cmd(f"git push -u origin {branch}")
 
     if not basarili:
-        # Eğer ilk push ise veya dal uyumsuzluğu varsa zorlamadan önce basit push dene
-        basarili, _, err = cmd(f"git push origin {branch}")
+        # Eğer uzak sunucuda değişiklik varsa önce çekmeyi dene
+        print("[i] Uzak depoyla senkronizasyon deneniyor...")
+        cmd(f"git pull origin {branch} --allow-unrelated-histories --no-rebase")
+        basarili, out, err = cmd(f"git push origin {branch}")
 
-    print("\n" + "=" * 45)
+    print("\n" + "=" * 50)
     if basarili:
-        print("🎉 TEBRİKLER! Projeniz başarıyla GitHub'a yüklendi.")
+        print("🎉 TEBRİKLER! 1.3 GB veriniz başarıyla yüklendi/güncellendi.")
     else:
-        print("❌ Yükleme sırasında bir hata oluştu.")
-        print(f"Hata detayı:\n{err}")
-        print("\nOlası Nedenler:")
-        print("1. GitHub girişiniz eksik olabilir (Personal Access Token gerekebilir).")
-        print("2. Repo linkini yanlış girmiş olabilirsiniz.")
-    print("=" * 45)
-
-    input("\nKapatmak için Enter'a basın...")
+        print("❌ Yükleme sırasında hata oluştu:")
+        print(err if err else out)
+    print("=" * 50)
 
 
 if __name__ == "__main__":
     try:
-        tek_tus_calistir()
+        calistir()
     except KeyboardInterrupt:
-        print("\n\nİşlem iptal edildi.")
+        print("\nİşlem iptal edildi.")
