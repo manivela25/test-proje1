@@ -2,3 +2,5 @@ Test dosyasi
 Wwqdw
 denemeler
 Güncel deneme
+denemeler
+Güncel deneme 2

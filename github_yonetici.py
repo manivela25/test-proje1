@@ -4,13 +4,20 @@ import sys
 
 
 def cmd(command):
-    """Komutu calistirir, (basarili_mi, cikti, hata) dondurur."""
-    res = subprocess.run(command, shell=True, text=True, capture_output=True)
+    """Windows, Mac ve Linux'ta encoding hatası vermeden komut çalıştırır."""
+    res = subprocess.run(
+        command,
+        shell=True,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",  # Windows Türkçe karakter çökmesini önler
+        errors="replace",  # Okunamayan karakter olursa akışı durdurmaz
+    )
     return res.returncode == 0, res.stdout.strip(), res.stderr.strip()
 
 
 def klasor_boyutu_hesapla(dizin):
-    """Proje klasorunun toplam boyutunu MB cinsinden hesaplar."""
+    """Proje klasörünün toplam boyutunu MB cinsinden hesaplar."""
     toplam_byte = 0
     for root, _, files in os.walk(dizin):
         if ".git" in root:
@@ -25,7 +32,7 @@ def klasor_boyutu_hesapla(dizin):
 
 
 def buyuk_dosya_taramasi(dizin, limit_mb=99):
-    """Tekil olarak 100 MB sinirina takilacak dosyalari tarar."""
+    """Tekil olarak 100 MB sınırına takılacak dosyaları tarar."""
     buyukler = []
     limit_byte = limit_mb * 1024 * 1024
     for root, _, files in os.walk(dizin):
@@ -44,7 +51,7 @@ def buyuk_dosya_taramasi(dizin, limit_mb=99):
 
 
 def git_ag_ayarlarini_yapilandir():
-    """Genis capli yuklemelerde timeout ve buffer kopmalarini onler."""
+    """Geniş çaplı yüklemelerde timeout ve buffer kopmalarını önler."""
     cmd("git config --global http.postBuffer 2097152000")  # 2 GB Buffer
     cmd("git config --global http.lowSpeedLimit 1000")
     cmd("git config --global http.lowSpeedTime 600")
@@ -93,6 +100,14 @@ def calistir():
     print("       🚀 GİTHUB YÜKLEME & GÜNCELLEME ARACI       ")
     print("=" * 50)
 
+    # Git kurulu mu kontrol et
+    git_var, _, _ = cmd("git --version")
+    if not git_var:
+        print("\n[!] Sistemde Git bulunamadı!")
+        print("Lütfen Git'i kurun: https://git-scm.com/downloads")
+        input("\nÇıkmak için Enter'a basın...")
+        return
+
     if not klasor_sec():
         return
 
@@ -111,7 +126,6 @@ def calistir():
         )
         print("    Yükleme yapılabilir ancak GitHub ileride uyarı verebilir.")
 
-    # 100 MB tekil dosya engeli kontrolü
     engeller = buyuk_dosya_taramasi(os.getcwd())
     if engeller:
         print("\n[!] DİKKAT: GitHub tek dosyada 100 MB sınırına sahiptir!")
@@ -130,7 +144,7 @@ def calistir():
             print("İşlem iptal edildi.")
             return
 
-    # 2. Ağ Optimizasyonu
+    # 2. Ağ Ayarları
     git_ag_ayarlarini_yapilandir()
 
     if not os.path.exists(".git"):
@@ -147,6 +161,7 @@ def calistir():
     _, status, _ = cmd("git status --short")
     if not status:
         print("\n✅ Değişen veya yeni eklenen dosya yok. Her şey güncel!")
+        input("\nKapatmak için Enter'a basın...")
         return
 
     mesaj = (
@@ -178,6 +193,8 @@ def calistir():
         print("❌ Yükleme sırasında hata oluştu:")
         print(err if err else out)
     print("=" * 50)
+
+    input("\nKapatmak için Enter'a basın...")
 
 
 if __name__ == "__main__":
